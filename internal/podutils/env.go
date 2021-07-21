@@ -25,8 +25,6 @@ import (
 	"github.com/virtual-kubelet/virtual-kubelet/log"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
 	apivalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/pointer"
@@ -65,11 +63,8 @@ const (
 	ReasonInvalidEnvironmentVariableNames = "InvalidEnvironmentVariableNames"
 )
 
-var masterServices = sets.NewString("kubernetes")
-
 // PopulateEnvironmentVariables populates the environment of each container (and init container) in the specified pod.
 func PopulateEnvironmentVariables(ctx context.Context, pod *corev1.Pod, rm *manager.ResourceManager, recorder record.EventRecorder) error {
-
 	// Populate each init container's environment.
 	for idx := range pod.Spec.InitContainers {
 		if err := populateContainerEnvironment(ctx, pod, &pod.Spec.InitContainers[idx], rm, recorder); err != nil {
@@ -115,53 +110,6 @@ func populateContainerEnvironment(ctx context.Context, pod *corev1.Pod, containe
 	container.Env = res
 
 	return nil
-}
-
-// getServiceEnvVarMap makes a map[string]string of env vars for services a
-// pod in namespace ns should see.
-// Based on getServiceEnvVarMap in kubelet_pods.go.
-func getServiceEnvVarMap(rm *manager.ResourceManager, ns string, enableServiceLinks bool) (map[string]string, error) {
-	var (
-		serviceMap = make(map[string]*corev1.Service)
-		m          = make(map[string]string)
-	)
-
-	services, err := rm.ListServices()
-	if err != nil {
-		return nil, err
-	}
-
-	// project the services in namespace ns onto the master services
-	for i := range services {
-		service := services[i]
-		// ignore services where ClusterIP is "None" or empty
-		if !IsServiceIPSet(service) {
-			continue
-		}
-		serviceName := service.Name
-
-		// We always want to add environment variables for master kubernetes service
-		// from the default namespace, even if enableServiceLinks is false.
-		// We also add environment variables for other services in the same
-		// namespace, if enableServiceLinks is true.
-		if service.Namespace == metav1.NamespaceDefault && masterServices.Has(serviceName) {
-			if _, exists := serviceMap[serviceName]; !exists {
-				serviceMap[serviceName] = service
-			}
-		} else if service.Namespace == ns && enableServiceLinks {
-			serviceMap[serviceName] = service
-		}
-	}
-
-	mappedServices := make([]*corev1.Service, 0, len(serviceMap))
-	for key := range serviceMap {
-		mappedServices = append(mappedServices, serviceMap[key])
-	}
-
-	for _, e := range FromServices(mappedServices) {
-		m[e.Name] = e.Value
-	}
-	return m, nil
 }
 
 // makeEnvironmentMapBasedOnEnvFrom returns a map representing the resolved environment of the specified container after being populated from the entries in the ".envFrom" field.
@@ -288,20 +236,7 @@ loop:
 
 // makeEnvironmentMap returns a map representing the resolved environment of the specified container after being populated from the entries in the ".env" and ".envFrom" field.
 func makeEnvironmentMap(ctx context.Context, pod *corev1.Pod, container *corev1.Container, rm *manager.ResourceManager, recorder record.EventRecorder, res map[string]string) error {
-	// TODO If pod.Spec.EnableServiceLinks is nil then fail as per 1.14 kubelet.
-	enableServiceLinks := corev1.DefaultEnableServiceLinks
-	if pod.Spec.EnableServiceLinks != nil {
-		enableServiceLinks = *pod.Spec.EnableServiceLinks
-	}
-
-	// Note that there is a race between Kubelet seeing the pod and kubelet seeing the service.
-	// To avoid this users can: (1) wait between starting a service and starting; or (2) detect
-	// missing service env var and exit and be restarted; or (3) use DNS instead of env vars
-	// and keep trying to resolve the DNS name of the service (recommended).
-	svcEnv, err := getServiceEnvVarMap(rm, pod.Namespace, enableServiceLinks)
-	if err != nil {
-		return err
-	}
+	svcEnv := map[string]string{}
 
 	// If the variable's Value is set, expand the `$(var)` references to other
 	// variables in the .Value field; the sources of variables are the declared
