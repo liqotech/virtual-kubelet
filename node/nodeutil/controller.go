@@ -78,7 +78,11 @@ func (n *Node) runHTTP(ctx context.Context) (func(), error) {
 
 	log.G(ctx).Debug("Started TLS listener")
 
-	srv := &http.Server{Handler: n.h, TLSConfig: n.tlsConfig, ReadHeaderTimeout: 30 * time.Second}
+	srv := &http.Server{
+		Handler: http.TimeoutHandler(n.h, 30*time.Second, "request timed out"),
+		TLSConfig: n.tlsConfig,
+		ReadHeaderTimeout: 30 * time.Second,
+	}
 	go srv.Serve(l) //nolint:errcheck
 	log.G(ctx).Debug("HTTP server running")
 
