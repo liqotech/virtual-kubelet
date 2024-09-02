@@ -112,7 +112,9 @@ func HandleContainerLogs(h ContainerLogsHandlerFunc) http.HandlerFunc {
 			return errdefs.NotFound("not found")
 		}
 
-		ctx := req.Context()
+		//ctx := req.Context()
+		ctx, cancel := context.WithCancel(context.TODO())
+		defer cancel()
 
 		namespace := vars["namespace"]
 		pod := vars["pod"]
